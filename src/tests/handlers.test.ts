@@ -1024,3 +1024,33 @@ describe("handler: node disk, journal and apt tools", () => {
     });
   }
 });
+
+describe("schema: pve_get_node_journal", () => {
+  it("publishes every parameter without pattern or maxLength", async () => {
+    const server = createServer();
+    registerAllTools(server, makeMockClient(), makeConfig());
+    const { client, cleanup } = await connectTestClient(server);
+    const { tools } = await client.listTools();
+    const schema = tools.find((t) => t.name === "pve_get_node_journal")
+      ?.inputSchema as { properties: Record<string, Record<string, unknown>> };
+    expect(Object.keys(schema.properties)).toEqual([
+      "node",
+      "since",
+      "until",
+      "lastentries",
+      "startcursor",
+      "endcursor",
+      "priority",
+      "service",
+      "unit",
+      "kernel",
+      "structured",
+    ]);
+    for (const name of ["priority", "service", "unit"]) {
+      expect(schema.properties[name]).toMatchObject({ type: "string" });
+      expect(schema.properties[name]).not.toHaveProperty("pattern");
+      expect(schema.properties[name]).not.toHaveProperty("maxLength");
+    }
+    await cleanup();
+  });
+});

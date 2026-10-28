@@ -228,23 +228,34 @@ export function registerNodeTools(
         .string()
         .optional()
         .describe("End before this journal cursor (conflicts with until)"),
+      // Checked with refine() rather than regex()/max(): the patterns and
+      // maxLength would end up in the published JSON schema, and some MCP
+      // clients then drop the whole schema for this tool.
       priority: z
         .string()
-        .regex(/^([0-7](\.\.[0-7])?)?$/)
+        .refine((v) => /^([0-7](\.\.[0-7])?)?$/.test(v), {
+          message: "Expected a level 0-7 or a 'LOW..HIGH' range",
+        })
         .optional()
         .describe(
-          "Syslog priority: a level 0 (emerg) to 7 (debug) selecting it and everything more severe, or a 'LOW..HIGH' range (e.g. '3' for errors and worse)",
+          "Syslog priority as a string: a level '0' (emerg) to '7' (debug) selecting it and everything more severe, or a 'LOW..HIGH' range (e.g. '3' for errors and worse)",
         ),
       service: z
         .string()
-        .regex(/^[A-Za-z0-9_.@:*?![\]/-]+$/)
-        .max(128)
+        .refine(
+          (v) => v.length <= 128 && /^[A-Za-z0-9_.@:*?![\]/-]+$/.test(v),
+          {
+            message:
+              "Expected a syslog identifier glob of at most 128 characters",
+          },
+        )
         .optional()
         .describe("Syslog identifier glob, e.g. 'pve*' or 'postfix/*'"),
       unit: z
         .string()
-        .regex(/^[A-Za-z0-9_.@:-]+$/)
-        .max(256)
+        .refine((v) => v.length <= 256 && /^[A-Za-z0-9_.@:-]+$/.test(v), {
+          message: "Expected a systemd unit name of at most 256 characters",
+        })
         .optional()
         .describe("Systemd unit (the .service suffix is implied)"),
       kernel: z.boolean().optional().describe("Only kernel messages"),
