@@ -186,6 +186,267 @@ export function registerNodeTools(
     },
   });
 
+  registerTool(server, config, {
+    name: "pve_get_node_journal",
+    title: "Get Node Journal",
+    description:
+      "Read the systemd journal of a specific node, optionally filtered by time range, cursor, priority, syslog identifier, systemd unit, or kernel messages. Without a range or cursor, returns the last 50 entries by default. The priority, service, unit, kernel and structured filters need a recent PVE 9.x",
+    category: "nodes",
+    accessTier: "read-only",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+    inputSchema: {
+      node: z.string().describe("The node name"),
+      since: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe("Entries since this UNIX epoch (conflicts with startcursor)"),
+      until: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe("Entries until this UNIX epoch (conflicts with endcursor)"),
+      lastentries: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe(
+          "Limit to the last N entries (conflicts with a range; default: 50 when no range or cursor is given)",
+        ),
+      startcursor: z
+        .string()
+        .optional()
+        .describe("Start after this journal cursor (conflicts with since)"),
+      endcursor: z
+        .string()
+        .optional()
+        .describe("End before this journal cursor (conflicts with until)"),
+      priority: z
+        .string()
+        .regex(/^([0-7](\.\.[0-7])?)?$/)
+        .optional()
+        .describe(
+          "Syslog priority: a level 0 (emerg) to 7 (debug) selecting it and everything more severe, or a 'LOW..HIGH' range (e.g. '3' for errors and worse)",
+        ),
+      service: z
+        .string()
+        .regex(/^[A-Za-z0-9_.@:*?![\]/-]+$/)
+        .max(128)
+        .optional()
+        .describe("Syslog identifier glob, e.g. 'pve*' or 'postfix/*'"),
+      unit: z
+        .string()
+        .regex(/^[A-Za-z0-9_.@:-]+$/)
+        .max(256)
+        .optional()
+        .describe("Systemd unit (the .service suffix is implied)"),
+      kernel: z.boolean().optional().describe("Only kernel messages"),
+      structured: z
+        .boolean()
+        .optional()
+        .describe(
+          "Return one JSON object per entry (timestamp, identifier, message, priority, ...) instead of text lines",
+        ),
+    },
+    handler: async (args) => {
+      let path = `/nodes/${args.node}/journal`;
+      const params = new URLSearchParams();
+      for (const key of [
+        "since",
+        "until",
+        "lastentries",
+        "startcursor",
+        "endcursor",
+        "priority",
+        "service",
+        "unit",
+      ] as const) {
+        if (args[key] !== undefined) params.set(key, String(args[key]));
+      }
+      if (args.kernel !== undefined)
+        params.set("kernel", args.kernel ? "1" : "0");
+      if (args.structured !== undefined)
+        params.set("structured", args.structured ? "1" : "0");
+      const hasRange =
+        args.since !== undefined ||
+        args.until !== undefined ||
+        args.startcursor !== undefined ||
+        args.endcursor !== undefined;
+      if (args.lastentries === undefined && !hasRange)
+        params.set("lastentries", "50");
+      const qs = params.toString();
+      if (qs) path += `?${qs}`;
+      const data = await client.get(path);
+      return JSON.stringify(data, null, 2);
+    },
+  });
+
+  registerTool(server, config, {
+    name: "pve_list_node_disks",
+    title: "List Node Disks",
+    description:
+      "List local disks of a specific node with model, serial, size, usage, wearout and SMART health",
+    category: "nodes",
+    accessTier: "read-only",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+    inputSchema: {
+      node: z.string().describe("The node name"),
+      "include-partitions": z
+        .boolean()
+        .optional()
+        .describe("Also include partitions"),
+      skipsmart: z.boolean().optional().describe("Skip SMART health checks"),
+      type: z
+        .enum(["unused", "journal_disks"])
+        .optional()
+        .describe("Only list disks of this type"),
+    },
+    handler: async (args) => {
+      let path = `/nodes/${args.node}/disks/list`;
+      const params = new URLSearchParams();
+      if (args["include-partitions"] !== undefined)
+        params.set(
+          "include-partitions",
+          args["include-partitions"] ? "1" : "0",
+        );
+      if (args.skipsmart !== undefined)
+        params.set("skipsmart", args.skipsmart ? "1" : "0");
+      if (args.type !== undefined) params.set("type", String(args.type));
+      const qs = params.toString();
+      if (qs) path += `?${qs}`;
+      const data = await client.get(path);
+      return JSON.stringify(data, null, 2);
+    },
+  });
+
+  registerTool(server, config, {
+    name: "pve_get_node_disk_smart",
+    title: "Get Node Disk SMART",
+    description: "Get SMART health and attributes of a disk on a specific node",
+    category: "nodes",
+    accessTier: "read-only",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+    inputSchema: {
+      node: z.string().describe("The node name"),
+      disk: z
+        .string()
+        .regex(/^\/dev\/[a-zA-Z0-9/]+$/)
+        .describe("Block device path (e.g. /dev/sda, /dev/nvme0n1)"),
+      healthonly: z
+        .boolean()
+        .optional()
+        .describe("Return only the health status"),
+    },
+    handler: async (args) => {
+      const params = new URLSearchParams({ disk: String(args.disk) });
+      if (args.healthonly !== undefined)
+        params.set("healthonly", args.healthonly ? "1" : "0");
+      const data = await client.get(
+        `/nodes/${args.node}/disks/smart?${params.toString()}`,
+      );
+      return JSON.stringify(data, null, 2);
+    },
+  });
+
+  registerTool(server, config, {
+    name: "pve_list_node_lvm",
+    title: "List Node LVM",
+    description:
+      "List LVM volume groups and their physical volumes on a specific node",
+    category: "nodes",
+    accessTier: "read-only",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+    inputSchema: {
+      node: z.string().describe("The node name"),
+    },
+    handler: async (args) => {
+      const data = await client.get(`/nodes/${args.node}/disks/lvm`);
+      return JSON.stringify(data, null, 2);
+    },
+  });
+
+  registerTool(server, config, {
+    name: "pve_list_node_lvmthin",
+    title: "List Node LVM Thin Pools",
+    description:
+      "List LVM thin pools on a specific node with data and metadata usage",
+    category: "nodes",
+    accessTier: "read-only",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+    inputSchema: {
+      node: z.string().describe("The node name"),
+    },
+    handler: async (args) => {
+      const data = await client.get(`/nodes/${args.node}/disks/lvmthin`);
+      return JSON.stringify(data, null, 2);
+    },
+  });
+
+  registerTool(server, config, {
+    name: "pve_list_node_package_versions",
+    title: "List Node Package Versions",
+    description:
+      "List installed versions of the Proxmox VE related packages on a specific node (like pveversion -v)",
+    category: "nodes",
+    accessTier: "read-only",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+    inputSchema: {
+      node: z.string().describe("The node name"),
+    },
+    handler: async (args) => {
+      const data = await client.get(`/nodes/${args.node}/apt/versions`);
+      return JSON.stringify(data, null, 2);
+    },
+  });
+
+  registerTool(server, config, {
+    name: "pve_list_node_apt_updates",
+    title: "List Node APT Updates",
+    description:
+      "List available package updates on a specific node, as of the last package database refresh. Requires Sys.Modify on /nodes/{node}",
+    category: "nodes",
+    accessTier: "read-only",
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+    inputSchema: {
+      node: z.string().describe("The node name"),
+    },
+    handler: async (args) => {
+      const data = await client.get(`/nodes/${args.node}/apt/update`);
+      return JSON.stringify(data, null, 2);
+    },
+  });
+
   // --- Read-execute tools ---
 
   registerTool(server, config, {
